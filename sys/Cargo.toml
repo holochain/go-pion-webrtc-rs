@@ -9,6 +9,11 @@ documentation = "https://docs.rs/go-pion-webrtc-sys"
 authors = [ "Holochain Core Dev Team <devcore@holochain.org>" ]
 keywords = ["holochain", "holo", "p2p", "tcp", "networking"]
 categories = ["network-programming"]
+exclude = [
+  # unzipped the vendor dir is > 10mb so we wouldn't be able to upload
+  # to crates.io, hence the need for the zip file
+  "vendor/",
+]
 
 [dependencies]
 libc = "0.2.126"
@@ -16,3 +21,6 @@ libloading = "0.7.3"
 once_cell = "1.12.0"
 ouroboros = "0.15.0"
 tempfile = "3.3.0"
+
+[build-dependencies]
+zip = { version = "0.6.2", default-features = false, features = [ "deflate" ] }

@@ -18,6 +18,7 @@ fn main() {
     lib_path.push("go-pion-webrtc.so");
 
     go_check_version();
+    go_unzip_vendor();
     go_build(&lib_path);
 }
 
@@ -37,6 +38,25 @@ fn go_check_version() {
         "go executable version must be >= 1.18, got: {}",
         ver
     );
+}
+
+fn go_unzip_vendor() {
+    //println!("cargo:warning=NOTE:go unzip vendor");
+
+    let manifest_path = std::env::var("CARGO_MANIFEST_DIR")
+        .map(std::path::PathBuf::from)
+        .expect("error reading manifest dir");
+
+    let mut vendor_path = manifest_path.clone();
+    vendor_path.push("vendor.zip");
+
+    zip::read::ZipArchive::new(
+        std::fs::File::open(vendor_path)
+            .expect("failed to open vendor zip file"),
+    )
+    .expect("failed to open vendor zip file")
+    .extract(manifest_path)
+    .expect("failed to extract vendor zip file");
 }
 
 fn go_build(path: &std::path::Path) {
