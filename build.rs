@@ -3,7 +3,8 @@ use std::process::Command;
 fn main() {
     println!("cargo:warning=NOTE:running go-pion-webrtc-rs build.rs");
 
-    //println!("cargo:rerun-if-changed=go.mod");
+    println!("cargo:rerun-if-changed=go.mod");
+    println!("cargo:rerun-if-changed=go.sum");
     println!("cargo:rerun-if-changed=main.go");
 
     let out_dir = std::path::PathBuf::from(
@@ -20,7 +21,6 @@ fn main() {
 
     go_check_version();
     go_build(&lib_path);
-    run_bindgen(&out_dir);
 }
 
 fn go_check_version() {
@@ -59,24 +59,4 @@ fn go_build(path: &std::path::Path) {
             .success(),
         "error running go build",
     );
-}
-
-fn run_bindgen(out_dir: &std::path::PathBuf) {
-    println!("cargo:warning=NOTE:running rust bindgen");
-
-    let mut header_path = out_dir.clone();
-    header_path.push("go-pion-webrtc.h");
-
-    let mut binding_path = out_dir.clone();
-    binding_path.push("go-pion-webrtc.rs");
-
-    let bindings = bindgen::Builder::default()
-        .header(header_path.to_string_lossy())
-        .parse_callbacks(Box::new(bindgen::CargoCallbacks))
-        .generate()
-        .expect("failed to generate ffi bindings");
-
-    bindings
-        .write_to_file(binding_path)
-        .expect("failed to write ffi bindings");
 }

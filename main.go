@@ -2,8 +2,8 @@ package main
 
 /*
 #include <stdint.h>
-typedef void (*GoSliceReadCb) (void *usr, int64_t len, const char *data);
-static inline void GoSliceReadCbInvoke(GoSliceReadCb cb, void *usr, int64_t len, const char *data) {
+typedef void (*GoSliceReadCb) (void *usr, int len, const char *data);
+static inline void GoSliceReadCbInvoke(GoSliceReadCb cb, void *usr, int len, const char *data) {
   cb(usr, len, data);
 }
 */
@@ -13,14 +13,18 @@ import (
   "runtime/cgo"
   "unsafe"
   "fmt"
+
+  //"github.com/pion/datachannel"
+  "github.com/pion/webrtc/v3"
 )
 
 func Hello() string {
-  return "hello world!"
+  //return "hello world!"
+  return webrtc.MimeTypeH264
 }
 
 //export GoSliceAlloc
-func GoSliceAlloc(length int) C.uintptr_t {
+func GoSliceAlloc(length C.int) C.uintptr_t {
   slice := make([]byte, length)
   slice[0] = 0
   slice[1] = 255
@@ -37,10 +41,10 @@ func GoSliceFree(slice_hnd C.uintptr_t) {
 }
 
 //export GoSliceLen
-func GoSliceLen(slice_hnd C.uintptr_t) C.int64_t {
+func GoSliceLen(slice_hnd C.uintptr_t) C.int {
   hnd := cgo.Handle(slice_hnd)
   slice := hnd.Value().([]byte)
-  return C.int64_t(len(slice))
+  return C.int(len(slice))
 }
 
 //export GoSliceRead
@@ -50,7 +54,7 @@ func GoSliceRead(slice_hnd C.uintptr_t, usr unsafe.Pointer, cb C.GoSliceReadCb) 
   C.GoSliceReadCbInvoke(
     cb,
     usr,
-    C.int64_t(len(slice)),
+    C.int(len(slice)),
     (*C.char)(unsafe.Pointer(&slice[0])),
   )
 }
