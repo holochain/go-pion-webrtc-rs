@@ -44,6 +44,7 @@ fn go_build(path: &std::path::Path) {
     cmd.arg("build")
         .arg("-o")
         .arg(path)
+        .arg("-mod=vendor")
         .arg("-buildmode=c-shared");
 
     println!("cargo:warning=NOTE:running go build: {:?}", cmd);
