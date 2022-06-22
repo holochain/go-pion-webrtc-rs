@@ -1,17 +1,15 @@
 use std::process::Command;
 
 fn main() {
-    println!("cargo:warning=NOTE:running go-pion-webrtc-rs build.rs");
+    //println!("cargo:warning=NOTE:running go-pion-webrtc-sys build.rs");
 
     println!("cargo:rerun-if-changed=go.mod");
     println!("cargo:rerun-if-changed=go.sum");
     println!("cargo:rerun-if-changed=main.go");
 
-    let out_dir = std::path::PathBuf::from(
+    let mut lib_path = std::path::PathBuf::from(
         std::env::var("OUT_DIR").expect("failed to read env OUT_DIR"),
     );
-
-    let mut lib_path = out_dir.clone();
     #[cfg(target_os = "macos")]
     lib_path.push("go-pion-webrtc.dylib");
     #[cfg(target_os = "windows")]
@@ -24,7 +22,7 @@ fn main() {
 }
 
 fn go_check_version() {
-    println!("cargo:warning=NOTE:checking go version");
+    //println!("cargo:warning=NOTE:checking go version");
 
     let go_version = Command::new("go")
         .arg("version")
@@ -46,7 +44,6 @@ fn go_build(path: &std::path::Path) {
     cmd.arg("build")
         .arg("-o")
         .arg(path)
-        .arg("-a")
         .arg("-buildmode=c-shared");
 
     println!("cargo:warning=NOTE:running go build: {:?}", cmd);

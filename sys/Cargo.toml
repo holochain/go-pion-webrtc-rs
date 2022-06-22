@@ -1,19 +1,18 @@
 [package]
-name = "go-pion-webrtc"
+name = "go-pion-webrtc-sys"
 version = "0.0.1"
 edition = "2021"
 description = "Rust bindings to the go pion webrtc library"
 license = "MIT OR Apache-2.0"
 repository = "https://github.com/holochain/go-pion-webrtc-rs"
-documentation = "https://docs.rs/go-pion-webrtc"
+documentation = "https://docs.rs/go-pion-webrtc-sys"
 authors = [ "Holochain Core Dev Team <devcore@holochain.org>" ]
 keywords = ["holochain", "holo", "p2p", "tcp", "networking"]
 categories = ["network-programming"]
 
 [dependencies]
-go-pion-webrtc-sys = { version = "0.0.1", path = "./sys" }
-
-[workspace]
-members = [
-  "sys",
-]
+libc = "0.2.126"
+libloading = "0.7.3"
+once_cell = "1.12.0"
+ouroboros = "0.15.0"
+tempfile = "3.3.0"
