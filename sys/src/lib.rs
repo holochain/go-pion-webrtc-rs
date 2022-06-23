@@ -29,39 +29,38 @@ const LIB_BYTES: &[u8] =
 
 use once_cell::sync::Lazy;
 
+/// Constants
+pub mod constants;
+use constants::*;
+
 #[ouroboros::self_referencing]
 struct LibInner {
     _temp_path: tempfile::TempPath,
     lib: libloading::Library,
     #[borrows(lib)]
-    #[not_covariant]
-    c_hello:
-        libloading::Symbol<'this, unsafe extern "C" fn() -> *mut libc::c_char>,
-    #[borrows(lib)]
-    #[not_covariant]
-    go_slice_alloc:
-        libloading::Symbol<'this, unsafe extern "C" fn(libc::c_int) -> usize>,
-    #[borrows(lib)]
-    #[not_covariant]
-    go_slice_free: libloading::Symbol<'this, unsafe extern "C" fn(usize)>,
-    #[borrows(lib)]
-    #[not_covariant]
-    go_slice_len:
-        libloading::Symbol<'this, unsafe extern "C" fn(usize) -> libc::c_int>,
-    #[borrows(lib)]
-    #[not_covariant]
-    go_slice_read: libloading::Symbol<
+    // not 100% sure about this, but we never unload the lib,
+    // so it's effectively 'static
+    #[covariant]
+    call: libloading::Symbol<
         'this,
         unsafe extern "C" fn(
-            usize,
-            *mut libc::c_void,
+            usize, // call_type
+            usize, // slot_a
+            usize, // slot_b
+            usize, // slot_c
+            usize, // slot_d
+            // response_cb
             Option<
                 unsafe extern "C" fn(
-                    *mut libc::c_void,
-                    libc::c_int,
-                    *const libc::c_char,
+                    *mut libc::c_void, // response_usr
+                    usize,             // response_type
+                    usize,             // slot_a
+                    usize,             // slot_b
+                    usize,             // slot_c
+                    usize,             // slot_d
                 ),
             >,
+            *mut libc::c_void, // response_usr
         ),
     >,
 }
@@ -89,25 +88,45 @@ impl LibInner {
         LibInnerBuilder {
             _temp_path: temp_path,
             lib,
-            c_hello_builder: |lib: &libloading::Library| {
-                lib.get(b"CHello").expect("failed to load symbol")
-            },
-            go_slice_alloc_builder: |lib: &libloading::Library| {
-                lib.get(b"GoSliceAlloc").expect("failed to load symbol")
-            },
-            go_slice_free_builder: |lib: &libloading::Library| {
-                lib.get(b"GoSliceFree").expect("failed to load symbol")
-            },
-            go_slice_len_builder: |lib: &libloading::Library| {
-                lib.get(b"GoSliceLen").expect("failed to load symbol")
-            },
-            go_slice_read_builder: |lib: &libloading::Library| {
-                lib.get(b"GoSliceRead").expect("failed to load symbol")
+            call_builder: |lib: &libloading::Library| {
+                lib.get(b"Call").expect("failed to load symbol")
             },
         }
         .build()
     }
 }
+
+#[derive(Debug)]
+pub struct Error {
+    pub code: usize,
+    pub error: String,
+}
+
+impl From<String> for Error {
+    fn from(s: String) -> Self {
+        Error { code: 0, error: s }
+    }
+}
+
+impl std::fmt::Display for Error {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{:?}", self)
+    }
+}
+
+impl std::error::Error for Error {}
+
+pub type Result<T> = std::result::Result<T, Error>;
+
+pub type CallType = usize;
+pub type ResponseUsr = *mut libc::c_void;
+pub type ResponseType = usize;
+pub type SlotA = usize;
+pub type SlotB = usize;
+pub type SlotC = usize;
+pub type SlotD = usize;
+pub type BufferId = usize;
+pub type PeerConId = usize;
 
 pub struct Api(LibInner);
 
@@ -116,38 +135,155 @@ impl Api {
         Self(unsafe { LibInner::priv_new() })
     }
 
-    #[inline(always)]
-    pub unsafe fn c_hello(&self) -> *mut libc::c_char {
-        self.0.with_c_hello(|f| f())
-    }
-
-    #[inline(always)]
-    pub unsafe fn go_slice_alloc(&self, length: libc::c_int) -> usize {
-        self.0.with_go_slice_alloc(|f| f(length))
-    }
-
-    #[inline(always)]
-    pub unsafe fn go_slice_free(&self, slice_hnd: usize) {
-        self.0.with_go_slice_free(|f| f(slice_hnd));
-    }
-
-    #[inline(always)]
-    pub unsafe fn go_slice_len(&self, slice_hnd: usize) -> libc::c_int {
-        self.0.with_go_slice_len(|f| f(slice_hnd))
-    }
-
-    #[inline(always)]
-    pub unsafe fn go_slice_read(
+    /// If the response slots are pointers to go memory, they are only valid
+    /// for the duration of the callback, so make sure you know what you
+    /// are doing if using this function directly.
+    /// If the call slots are pointers to rust memory, go will not access them
+    /// outside this call invocation.
+    #[inline]
+    pub unsafe fn call<Cb, R>(
         &self,
-        slice_hnd: usize,
-        usr: *mut libc::c_void,
-        cb: unsafe extern "C" fn(
-            *mut libc::c_void,
-            libc::c_int,
-            *const libc::c_char,
-        ),
-    ) {
-        self.0.with_go_slice_read(|f| f(slice_hnd, usr, Some(cb)));
+        call_type: CallType,
+        slot_a: SlotA,
+        slot_b: SlotB,
+        slot_c: SlotC,
+        slot_d: SlotD,
+        cb: Cb,
+    ) -> Result<R>
+    where
+        Cb: FnOnce(
+            Result<(ResponseType, SlotA, SlotB, SlotC, SlotD)>,
+        ) -> Result<R>,
+    {
+        let mut out = Err("not called".to_string().into());
+        self.call_inner(
+            call_type,
+            slot_a,
+            slot_b,
+            slot_c,
+            slot_d,
+            |t, a, b, c, d| {
+                out = if t == Ty::Err as usize {
+                    let err = std::slice::from_raw_parts(b as *const u8, c);
+                    let err = Error {
+                        code: a,
+                        error: String::from_utf8_lossy(err).to_string(),
+                    };
+                    cb(Err(err))
+                } else {
+                    cb(Ok((t, a, b, c, d)))
+                };
+            },
+        );
+        out
+    }
+
+    #[inline]
+    unsafe fn call_inner<'lt, 'a, Cb>(
+        &'lt self,
+        call_type: CallType,
+        slot_a: SlotA,
+        slot_b: SlotB,
+        slot_c: SlotC,
+        slot_d: SlotD,
+        cb: Cb,
+    ) where
+        Cb: 'a + FnOnce(ResponseType, SlotA, SlotB, SlotC, SlotD),
+    {
+        type DynCb<'a> =
+            Box<Box<dyn FnOnce(ResponseType, SlotA, SlotB, SlotC, SlotD) + 'a>>;
+
+        unsafe extern "C" fn call_cb(
+            response_usr: *mut libc::c_void,
+            response_type: ResponseType,
+            slot_a: SlotA,
+            slot_b: SlotB,
+            slot_c: SlotC,
+            slot_d: SlotD,
+        ) {
+            let closure: DynCb = Box::from_raw(response_usr as *mut _);
+
+            closure(response_type, slot_a, slot_b, slot_c, slot_d);
+        }
+
+        let cb: DynCb<'a> = Box::new(Box::new(cb));
+        let cb = Box::into_raw(cb);
+
+        self.0.borrow_call()(
+            call_type,
+            slot_a,
+            slot_b,
+            slot_c,
+            slot_d,
+            Some(call_cb),
+            cb as *mut _,
+        );
+    }
+
+    /// Create a new buffer in go memory with given length,
+    /// access the buffer's memory in the callback.
+    #[inline]
+    pub unsafe fn buffer_alloc<Cb, R>(&self, len: usize, cb: Cb) -> Result<R>
+    where
+        Cb: FnOnce(Result<(BufferId, &mut [u8])>) -> Result<R>,
+    {
+        self.call(Ty::BufferAlloc as usize, len, 0, 0, 0, move |r| match r {
+            Ok((_t, a, b, c, _d)) => {
+                let s = std::slice::from_raw_parts_mut(b as *mut _, c);
+                cb(Ok((a, s)))
+            }
+            Err(e) => cb(Err(e)),
+        })
+    }
+
+    #[inline]
+    pub unsafe fn buffer_free(&self, id: BufferId) {
+        self.0.borrow_call()(
+            Ty::BufferFree as usize,
+            id,
+            0,
+            0,
+            0,
+            None,
+            std::ptr::null_mut(),
+        );
+    }
+
+    #[inline]
+    pub unsafe fn buffer_access<Cb, R>(&self, id: BufferId, cb: Cb) -> Result<R>
+    where
+        Cb: FnOnce(Result<(BufferId, &mut [u8])>) -> Result<R>,
+    {
+        self.call(Ty::BufferAccess as usize, id, 0, 0, 0, move |r| match r {
+            Ok((_t, a, b, c, _d)) => {
+                let s = std::slice::from_raw_parts_mut(b as *mut _, c);
+                cb(Ok((a, s)))
+            }
+            Err(e) => cb(Err(e)),
+        })
+    }
+
+    #[inline]
+    pub unsafe fn peer_con_alloc(&self, json: &str) -> Result<PeerConId> {
+        let len = json.as_bytes().len();
+        let data = json.as_bytes().as_ptr() as usize;
+        self.call(Ty::PeerConAlloc as usize, data, len, 0, 0, |r| match r {
+            Ok((_t, a, _b, _c, _d)) => Ok(a),
+            Err(e) => Err(e),
+        })
+    }
+
+    #[inline]
+    pub unsafe fn peer_con_free(&self, id: PeerConId) {
+        self.0.borrow_call()(
+            Ty::PeerConFree as usize,
+            id,
+            0,
+            0,
+            0,
+            None,
+            std::ptr::null_mut(),
+        );
     }
 }
 
@@ -159,51 +295,34 @@ mod test {
     use super::*;
 
     #[test]
-    fn try_c_hello() {
-        let c_str = unsafe {
-            let c_str = std::ffi::CStr::from_ptr(API.c_hello());
-            c_str.to_str().unwrap().to_owned()
-        };
-        println!("got: {}", c_str);
-        assert_eq!("video/H264", c_str.as_str());
-    }
-
-    #[inline(always)]
-    unsafe fn call_go_slice_read<F>(slice_hnd: usize, cb: F)
-    where
-        F: FnOnce(&[u8]),
-    {
-        #[inline(always)]
-        unsafe extern "C" fn callback_delegate(
-            usr: *mut libc::c_void,
-            len: libc::c_int,
-            data: *const libc::c_char,
-        ) {
-            let closure: Box<Box<dyn FnOnce(&[u8])>> =
-                Box::from_raw(usr as *mut _);
-            closure(std::slice::from_raw_parts(
-                data as *const u8,
-                len as usize,
-            ));
+    fn buffer() {
+        unsafe {
+            let buf_id = API
+                .buffer_alloc(8, |r| {
+                    let (id, buf) = r.unwrap();
+                    buf[1] = 1;
+                    buf[2] = 254;
+                    println!("GOT BUF: {:?}", buf);
+                    Ok(id)
+                })
+                .unwrap();
+            API.buffer_access(buf_id, |r| {
+                let (_, buf) = r.unwrap();
+                assert_eq!(buf[0], 0);
+                assert_eq!(buf[1], 1);
+                assert_eq!(buf[2], 254);
+                <Result<()>>::Ok(())
+            })
+            .unwrap();
+            API.buffer_free(buf_id);
         }
-
-        // double box, otherwise it's a fat pointer
-        let cb: Box<Box<dyn FnOnce(&[u8])>> = Box::new(Box::new(cb));
-        let cb = Box::into_raw(cb);
-
-        API.go_slice_read(slice_hnd, cb as *mut _, callback_delegate);
     }
 
     #[test]
-    fn go_slice() {
-        let slice = unsafe { API.go_slice_alloc(8) };
-        let len = unsafe { API.go_slice_len(slice) };
-        assert_eq!(8, len);
+    fn peer_con() {
         unsafe {
-            call_go_slice_read(slice, |data| {
-                println!("{:?}", data);
-            });
+            let peer_con_id = API.peer_con_alloc("{}").unwrap();
+            API.peer_con_free(peer_con_id);
         }
-        unsafe { API.go_slice_free(slice) };
     }
 }
