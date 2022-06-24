@@ -15,6 +15,9 @@
 #![allow(non_snake_case)]
 #![allow(clippy::missing_safety_doc)]
 
+use once_cell::sync::Lazy;
+use std::sync::Arc;
+
 #[cfg(target_os = "macos")]
 const LIB_BYTES: &[u8] =
     include_bytes!(concat!(env!("OUT_DIR"), "/go-pion-webrtc.dylib"));
@@ -27,8 +30,6 @@ const LIB_BYTES: &[u8] =
 const LIB_BYTES: &[u8] =
     include_bytes!(concat!(env!("OUT_DIR"), "/go-pion-webrtc.so"));
 
-use once_cell::sync::Lazy;
-
 /// Constants
 pub mod constants;
 use constants::*;
@@ -37,6 +38,27 @@ use constants::*;
 struct LibInner {
     _temp_path: tempfile::TempPath,
     lib: libloading::Library,
+    #[borrows(lib)]
+    // not 100% sure about this, but we never unload the lib,
+    // so it's effectively 'static
+    #[covariant]
+    on_event: libloading::Symbol<
+        'this,
+        unsafe extern "C" fn(
+            // event_cb
+            Option<
+                unsafe extern "C" fn(
+                    *mut libc::c_void, // response_usr
+                    usize,             // response_type
+                    usize,             // slot_a
+                    usize,             // slot_b
+                    usize,             // slot_c
+                    usize,             // slot_d
+                ),
+            >,
+            *mut libc::c_void, // event_usr
+        ) -> *mut libc::c_void,
+    >,
     #[borrows(lib)]
     // not 100% sure about this, but we never unload the lib,
     // so it's effectively 'static
@@ -88,6 +110,9 @@ impl LibInner {
         LibInnerBuilder {
             _temp_path: temp_path,
             lib,
+            on_event_builder: |lib: &libloading::Library| {
+                lib.get(b"OnEvent").expect("failed to load symbol")
+            },
             call_builder: |lib: &libloading::Library| {
                 lib.get(b"Call").expect("failed to load symbol")
             },
@@ -133,6 +158,52 @@ pub struct Api(LibInner);
 impl Api {
     fn priv_new() -> Self {
         Self(unsafe { LibInner::priv_new() })
+    }
+
+    #[inline]
+    pub unsafe fn on_event<Cb>(&self, cb: Cb)
+    where
+        Cb: Fn(ResponseType, SlotA, SlotB, SlotC, SlotD)
+            + 'static
+            + Send
+            + Sync,
+    {
+        type DynCb = Box<
+            Arc<
+                dyn Fn(ResponseType, SlotA, SlotB, SlotC, SlotD)
+                    + 'static
+                    + Send
+                    + Sync,
+            >,
+        >;
+
+        unsafe extern "C" fn on_event_cb(
+            event_usr: *mut libc::c_void,
+            event_type: ResponseType,
+            slot_a: SlotA,
+            slot_b: SlotB,
+            slot_c: SlotC,
+            slot_d: SlotD,
+        ) {
+            let closure: DynCb = Box::from_raw(event_usr as *mut _);
+
+            closure(event_type, slot_a, slot_b, slot_c, slot_d);
+
+            // need to forget it every time, otherwise drop will run
+            Box::into_raw(closure);
+        }
+
+        let cb: DynCb = Box::new(Arc::new(cb));
+        let cb = Box::into_raw(cb);
+
+        let prev_usr =
+            self.0.borrow_on_event()(Some(on_event_cb), cb as *mut _);
+
+        if !prev_usr.is_null() {
+            let closure: DynCb = Box::from_raw(prev_usr as *mut _);
+            // *this* one we want to drop
+            drop(closure);
+        }
     }
 
     /// If the response slots are pointers to go memory, they are only valid

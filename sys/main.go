@@ -38,6 +38,7 @@ import "C"
 import (
   "unsafe"
   "fmt"
+  "sync"
 )
 
 type UintPtrT = C.uintptr_t;
@@ -67,15 +68,53 @@ func MessageCbInvoke(
   C.MessageCbInvoke(cb, usr, message_type, slot_a, slot_b, slot_c, slot_d)
 }
 
+type eventReg struct {
+  mu sync.Mutex
+  event_cb C.MessageCb
+  event_usr unsafe.Pointer
+}
+
+var globalEventReg eventReg
+
+func EmitEvent(
+  message_type UintPtrT,
+  slot_a UintPtrT,
+  slot_b UintPtrT,
+  slot_c UintPtrT,
+  slot_d UintPtrT,
+) {
+  globalEventReg.mu.Lock()
+  defer globalEventReg.mu.Unlock()
+
+  C.MessageCbInvoke(
+    globalEventReg.event_cb,
+    globalEventReg.event_usr,
+    message_type,
+    slot_a,
+    slot_b,
+    slot_c,
+    slot_d,
+  )
+}
+
 // register the MessageCb that will be invoked for events
 //export OnEvent
 func OnEvent(
   // the callback to invoke
-  cb C.MessageCb,
+  event_cb C.MessageCb,
 
   // the user data to forward to the callback
-  usr unsafe.Pointer,
-) {
+  event_usr unsafe.Pointer,
+) unsafe.Pointer {
+  globalEventReg.mu.Lock()
+  defer globalEventReg.mu.Unlock()
+
+  prev := globalEventReg.event_usr
+
+  globalEventReg.event_cb = event_cb
+  globalEventReg.event_usr = event_usr
+
+  return prev
 }
 
 // make a call into the library
