@@ -202,7 +202,7 @@ impl Api {
                     };
                     Event::Error(err)
                 }
-                TY_PEER_CON_ICE_CANDIDATE => {
+                TY_PEER_CON_ON_ICE_CANDIDATE => {
                     let candidate =
                         std::slice::from_raw_parts(slot_b as *const u8, slot_c);
                     let candidate =
@@ -212,7 +212,7 @@ impl Api {
                         candidate,
                     }
                 }
-                TY_PEER_CON_STATE_CHANGE => Event::PeerConStateChange {
+                TY_PEER_CON_ON_STATE_CHANGE => Event::PeerConStateChange {
                     peer_con_id: slot_a,
                     peer_con_state: slot_b,
                 },
@@ -417,6 +417,30 @@ impl Api {
     }
 
     #[inline]
+    pub unsafe fn peer_con_create_answer(
+        &self,
+        id: BufferId,
+        json: Option<&str>,
+    ) -> Result<String> {
+        let mut data = 0;
+        let mut len = 0;
+
+        if let Some(json) = json {
+            len = json.as_bytes().len();
+            data = json.as_bytes().as_ptr() as usize;
+        }
+
+        self.call(TY_PEER_CON_CREATE_ANSWER, id, data, len, 0, |r| match r {
+            Ok((_t, a, b, _c, _d)) => {
+                let s = std::slice::from_raw_parts(a as *const _, b);
+                let s = String::from_utf8_lossy(s).to_string();
+                Ok(s)
+            }
+            Err(e) => Err(e),
+        })
+    }
+
+    #[inline]
     pub unsafe fn peer_con_set_local_desc(
         &self,
         id: BufferId,
@@ -429,6 +453,43 @@ impl Api {
             Ok((_t, _a, _b, _c, _d)) => Ok(()),
             Err(e) => Err(e),
         })
+    }
+
+    #[inline]
+    pub unsafe fn peer_con_set_rem_desc(
+        &self,
+        id: BufferId,
+        json: &str,
+    ) -> Result<()> {
+        let len = json.as_bytes().len();
+        let data = json.as_bytes().as_ptr() as usize;
+
+        self.call(TY_PEER_CON_SET_REM_DESC, id, data, len, 0, |r| match r {
+            Ok((_t, _a, _b, _c, _d)) => Ok(()),
+            Err(e) => Err(e),
+        })
+    }
+
+    #[inline]
+    pub unsafe fn peer_con_add_ice_candidate(
+        &self,
+        id: BufferId,
+        json: &str,
+    ) -> Result<()> {
+        let len = json.as_bytes().len();
+        let data = json.as_bytes().as_ptr() as usize;
+
+        self.call(
+            TY_PEER_CON_ADD_ICE_CANDIDATE,
+            id,
+            data,
+            len,
+            0,
+            |r| match r {
+                Ok((_t, _a, _b, _c, _d)) => Ok(()),
+                Err(e) => Err(e),
+            },
+        )
     }
 }
 
@@ -466,11 +527,7 @@ mod test {
     #[test]
     fn peer_con() {
         unsafe {
-            API.on_event(|evt| {
-                println!("RUST EVT: {:?}", evt);
-            });
-
-            let peer_con_id = API
+            let peer1 = API
                 .peer_con_alloc(
                     r#"{
     "iceServers": [
@@ -484,13 +541,86 @@ mod test {
                 )
                 .unwrap();
 
-            let offer = API.peer_con_create_offer(peer_con_id, None).unwrap();
+            let peer2 = API
+                .peer_con_alloc(
+                    r#"{
+    "iceServers": [
+        {
+            "urls": [
+                "stun:stun.l.google.com:19302"
+            ]
+        }
+    ]
+}"#,
+                )
+                .unwrap();
+
+            let ice1 = Arc::new(parking_lot::Mutex::new(Vec::new()));
+            let ice2 = Arc::new(parking_lot::Mutex::new(Vec::new()));
+
+            {
+                let ice1 = ice1.clone();
+                let ice2 = ice2.clone();
+                API.on_event(move |evt| match evt {
+                    Event::Error(err) => panic!("{}", err),
+                    Event::PeerConICECandidate {
+                        peer_con_id,
+                        candidate,
+                    } => {
+                        println!("RUST ICE: {} {}", peer_con_id, candidate);
+                        if peer_con_id == peer1 {
+                            println!("peer2 add candidate {}", candidate);
+                            API.peer_con_add_ice_candidate(peer2, &candidate)
+                                .unwrap();
+                            ice1.lock().push(candidate);
+                        } else if peer_con_id == peer2 {
+                            println!("peer1 add candidate {}", candidate);
+                            API.peer_con_add_ice_candidate(peer1, &candidate)
+                                .unwrap();
+                            ice2.lock().push(candidate);
+                        }
+                    }
+                    Event::PeerConStateChange {
+                        peer_con_id,
+                        peer_con_state,
+                    } => {
+                        println!(
+                            "RUST STATE EVT: {} {}",
+                            peer_con_id, peer_con_state
+                        );
+                    }
+                });
+            }
+
+            let offer = API.peer_con_create_offer(peer1, None).unwrap();
             println!("RUST OFFER: {}", offer);
 
-            API.peer_con_set_local_desc(peer_con_id, &offer).unwrap();
+            API.peer_con_set_local_desc(peer1, &offer).unwrap();
 
-            std::thread::sleep(std::time::Duration::from_secs(2));
-            API.peer_con_free(peer_con_id);
+            API.peer_con_set_rem_desc(peer2, &offer).unwrap();
+
+            let answer = API.peer_con_create_answer(peer2, None).unwrap();
+            println!("RUST ANSWER: {}", answer);
+
+            API.peer_con_set_local_desc(peer2, &answer).unwrap();
+
+            API.peer_con_set_rem_desc(peer1, &answer).unwrap();
+
+            let clist1 = ice1.lock().clone();
+            for c in clist1 {
+                println!("peer2 add candidate {}", c);
+                API.peer_con_add_ice_candidate(peer2, &c).unwrap();
+            }
+
+            let clist2 = ice2.lock().clone();
+            for c in clist2 {
+                println!("peer1 add candidate {}", c);
+                API.peer_con_add_ice_candidate(peer1, &c).unwrap();
+            }
+
+            std::thread::sleep(std::time::Duration::from_secs(5));
+            API.peer_con_free(peer1);
+            API.peer_con_free(peer2);
             std::thread::sleep(std::time::Duration::from_secs(1));
         }
     }

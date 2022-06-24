@@ -50,23 +50,46 @@ const (
   // - msg slot_b: utf8 json len
   TyPeerConCreateOffer UintPtrT = 0x9003
 
+  // Request an existing peer con create an answer.
+  // - allowed contexts: Call, Response
+  // - call slot_a: peer_con id
+  // - call slot_b: utf8 json ptr
+  // - call slot_c: utf8 json len
+  // - msg slot_a: utf8 json ptr
+  // - msg slot_b: utf8 json len
+  TyPeerConCreateAnswer UintPtrT = 0x9004
+
   // Request an existing peer con set local description.
   // - allowed contexts: Call, Response
   // - call slot_a: peer_con id
   // - call slot_b: utf8 json ptr
   // - call slot_c: utf8 json len
-  TyPeerConSetLocalDesc UintPtrT = 0x9004
+  TyPeerConSetLocalDesc UintPtrT = 0x9005
+
+  // Request an existing peer con set rem description.
+  // - allowed contexts: Call, Response
+  // - call slot_a: peer_con id
+  // - call slot_b: utf8 json ptr
+  // - call slot_c: utf8 json len
+  TyPeerConSetRemDesc UintPtrT = 0x9006
+
+  // Request an existing peer con add ice candidate.
+  // - allowed contexts: Call, Response
+  // - call slot_a: peer_con id
+  // - call slot_b: utf8 json ptr
+  // - call slot_c: utf8 json len
+  TyPeerConAddICECandidate UintPtrT = 0x9007
 
   // OnICECandidate event on an existing peer con.
   // - allowed contexts: Event
   // - msg slot_a: peer_con id
   // - msg slot_b: utf8 ptr
   // - msg slot_c: utf8 len
-  TyPeerConICECandidate UintPtrT = 0x9801
+  TyPeerConOnICECandidate UintPtrT = 0x9801
 
   // OnConStateChange event on an existing peer con.
   // - allowed contexts: Event
   // - msg slot_a: peer_con id
   // - msg slot_b: state id
-  TyPeerConStateChange UintPtrT = 0x9802
+  TyPeerConOnStateChange UintPtrT = 0x9802
 )

@@ -221,8 +221,14 @@ func callInner(
     CallPeerConAlloc(slot_a, slot_b, response_cb, response_usr)
   case TyPeerConCreateOffer:
     CallPeerConCreateOffer(slot_a, slot_b, slot_c, response_cb, response_usr)
+  case TyPeerConCreateAnswer:
+    CallPeerConCreateAnswer(slot_a, slot_b, slot_c, response_cb, response_usr)
   case TyPeerConSetLocalDesc:
     CallPeerConSetLocalDesc(slot_a, slot_b, slot_c, response_cb, response_usr)
+  case TyPeerConSetRemDesc:
+    CallPeerConSetRemDesc(slot_a, slot_b, slot_c, response_cb, response_usr)
+  case TyPeerConAddICECandidate:
+    CallPeerConAddICECandidate(slot_a, slot_b, slot_c, response_cb, response_usr)
   default:
     panic(fmt.Errorf("invalid call_type: %d", call_type))
   }
