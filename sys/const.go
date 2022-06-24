@@ -41,10 +41,32 @@ const (
   // - call slot_a: peer_con id
   TyPeerConFree UintPtrT = 0x9002
 
+  // Request an existing peer con create an offer.
+  // - allowed contexts: Call, Response
+  // - call slot_a: peer_con id
+  // - call slot_b: utf8 json ptr
+  // - call slot_c: utf8 json len
+  // - msg slot_a: utf8 json ptr
+  // - msg slot_b: utf8 json len
+  TyPeerConCreateOffer UintPtrT = 0x9003
+
+  // Request an existing peer con set local description.
+  // - allowed contexts: Call, Response
+  // - call slot_a: peer_con id
+  // - call slot_b: utf8 json ptr
+  // - call slot_c: utf8 json len
+  TyPeerConSetLocalDesc UintPtrT = 0x9004
+
   // OnICECandidate event on an existing peer con.
   // - allowed contexts: Event
   // - msg slot_a: peer_con id
-  // - msg slot_b: utf8 json ptr
-  // - msg slot_c: utf8 json len
+  // - msg slot_b: utf8 ptr
+  // - msg slot_c: utf8 len
   TyPeerConICECandidate UintPtrT = 0x9801
+
+  // OnConStateChange event on an existing peer con.
+  // - allowed contexts: Event
+  // - msg slot_a: peer_con id
+  // - msg slot_b: state id
+  TyPeerConStateChange UintPtrT = 0x9802
 )

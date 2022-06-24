@@ -14,6 +14,7 @@
 #![allow(non_camel_case_types)]
 #![allow(non_snake_case)]
 #![allow(clippy::missing_safety_doc)]
+#![allow(clippy::type_complexity)]
 
 use once_cell::sync::Lazy;
 use std::sync::Arc;
@@ -150,8 +151,23 @@ pub type SlotA = usize;
 pub type SlotB = usize;
 pub type SlotC = usize;
 pub type SlotD = usize;
+pub type ErrorCode = usize;
 pub type BufferId = usize;
 pub type PeerConId = usize;
+pub type PeerConState = usize;
+
+#[derive(Debug)]
+pub enum Event {
+    Error(Error),
+    PeerConICECandidate {
+        peer_con_id: PeerConId,
+        candidate: String,
+    },
+    PeerConStateChange {
+        peer_con_id: PeerConId,
+        peer_con_state: PeerConState,
+    },
+}
 
 pub struct Api(LibInner);
 
@@ -160,22 +176,11 @@ impl Api {
         Self(unsafe { LibInner::priv_new() })
     }
 
-    #[inline]
     pub unsafe fn on_event<Cb>(&self, cb: Cb)
     where
-        Cb: Fn(ResponseType, SlotA, SlotB, SlotC, SlotD)
-            + 'static
-            + Send
-            + Sync,
+        Cb: Fn(Event) + 'static + Send + Sync,
     {
-        type DynCb = Box<
-            Arc<
-                dyn Fn(ResponseType, SlotA, SlotB, SlotC, SlotD)
-                    + 'static
-                    + Send
-                    + Sync,
-            >,
-        >;
+        type DynCb = Box<Arc<dyn Fn(Event) + 'static + Send + Sync>>;
 
         unsafe extern "C" fn on_event_cb(
             event_usr: *mut libc::c_void,
@@ -183,11 +188,41 @@ impl Api {
             slot_a: SlotA,
             slot_b: SlotB,
             slot_c: SlotC,
-            slot_d: SlotD,
+            _slot_d: SlotD,
         ) {
             let closure: DynCb = Box::from_raw(event_usr as *mut _);
 
-            closure(event_type, slot_a, slot_b, slot_c, slot_d);
+            let evt = match event_type {
+                TY_ERR => {
+                    let err =
+                        std::slice::from_raw_parts(slot_b as *const u8, slot_c);
+                    let err = Error {
+                        code: slot_a,
+                        error: String::from_utf8_lossy(err).to_string(),
+                    };
+                    Event::Error(err)
+                }
+                TY_PEER_CON_ICE_CANDIDATE => {
+                    let candidate =
+                        std::slice::from_raw_parts(slot_b as *const u8, slot_c);
+                    let candidate =
+                        String::from_utf8_lossy(candidate).to_string();
+                    Event::PeerConICECandidate {
+                        peer_con_id: slot_a,
+                        candidate,
+                    }
+                }
+                TY_PEER_CON_STATE_CHANGE => Event::PeerConStateChange {
+                    peer_con_id: slot_a,
+                    peer_con_state: slot_b,
+                },
+                oth => Event::Error(Error {
+                    code: 0,
+                    error: format!("invalide event_type: {}", oth),
+                }),
+            };
+
+            closure(evt);
 
             // need to forget it every time, otherwise drop will run
             Box::into_raw(closure);
@@ -234,7 +269,7 @@ impl Api {
             slot_c,
             slot_d,
             |t, a, b, c, d| {
-                out = if t == Ty::Err as usize {
+                out = if t == TY_ERR {
                     let err = std::slice::from_raw_parts(b as *const u8, c);
                     let err = Error {
                         code: a,
@@ -298,7 +333,7 @@ impl Api {
     where
         Cb: FnOnce(Result<(BufferId, &mut [u8])>) -> Result<R>,
     {
-        self.call(Ty::BufferAlloc as usize, len, 0, 0, 0, move |r| match r {
+        self.call(TY_BUFFER_ALLOC, len, 0, 0, 0, move |r| match r {
             Ok((_t, a, b, c, _d)) => {
                 let s = std::slice::from_raw_parts_mut(b as *mut _, c);
                 cb(Ok((a, s)))
@@ -310,7 +345,7 @@ impl Api {
     #[inline]
     pub unsafe fn buffer_free(&self, id: BufferId) {
         self.0.borrow_call()(
-            Ty::BufferFree as usize,
+            TY_BUFFER_FREE,
             id,
             0,
             0,
@@ -325,7 +360,7 @@ impl Api {
     where
         Cb: FnOnce(Result<(BufferId, &mut [u8])>) -> Result<R>,
     {
-        self.call(Ty::BufferAccess as usize, id, 0, 0, 0, move |r| match r {
+        self.call(TY_BUFFER_ACCESS, id, 0, 0, 0, move |r| match r {
             Ok((_t, a, b, c, _d)) => {
                 let s = std::slice::from_raw_parts_mut(b as *mut _, c);
                 cb(Ok((a, s)))
@@ -338,7 +373,7 @@ impl Api {
     pub unsafe fn peer_con_alloc(&self, json: &str) -> Result<PeerConId> {
         let len = json.as_bytes().len();
         let data = json.as_bytes().as_ptr() as usize;
-        self.call(Ty::PeerConAlloc as usize, data, len, 0, 0, |r| match r {
+        self.call(TY_PEER_CON_ALLOC, data, len, 0, 0, |r| match r {
             Ok((_t, a, _b, _c, _d)) => Ok(a),
             Err(e) => Err(e),
         })
@@ -347,7 +382,7 @@ impl Api {
     #[inline]
     pub unsafe fn peer_con_free(&self, id: PeerConId) {
         self.0.borrow_call()(
-            Ty::PeerConFree as usize,
+            TY_PEER_CON_FREE,
             id,
             0,
             0,
@@ -355,6 +390,45 @@ impl Api {
             None,
             std::ptr::null_mut(),
         );
+    }
+
+    #[inline]
+    pub unsafe fn peer_con_create_offer(
+        &self,
+        id: BufferId,
+        json: Option<&str>,
+    ) -> Result<String> {
+        let mut data = 0;
+        let mut len = 0;
+
+        if let Some(json) = json {
+            len = json.as_bytes().len();
+            data = json.as_bytes().as_ptr() as usize;
+        }
+
+        self.call(TY_PEER_CON_CREATE_OFFER, id, data, len, 0, |r| match r {
+            Ok((_t, a, b, _c, _d)) => {
+                let s = std::slice::from_raw_parts(a as *const _, b);
+                let s = String::from_utf8_lossy(s).to_string();
+                Ok(s)
+            }
+            Err(e) => Err(e),
+        })
+    }
+
+    #[inline]
+    pub unsafe fn peer_con_set_local_desc(
+        &self,
+        id: BufferId,
+        json: &str,
+    ) -> Result<()> {
+        let len = json.as_bytes().len();
+        let data = json.as_bytes().as_ptr() as usize;
+
+        self.call(TY_PEER_CON_SET_LOCAL_DESC, id, data, len, 0, |r| match r {
+            Ok((_t, _a, _b, _c, _d)) => Ok(()),
+            Err(e) => Err(e),
+        })
     }
 }
 
@@ -392,8 +466,32 @@ mod test {
     #[test]
     fn peer_con() {
         unsafe {
-            let peer_con_id = API.peer_con_alloc("{}").unwrap();
+            API.on_event(|evt| {
+                println!("RUST EVT: {:?}", evt);
+            });
+
+            let peer_con_id = API
+                .peer_con_alloc(
+                    r#"{
+    "iceServers": [
+        {
+            "urls": [
+                "stun:stun.l.google.com:19302"
+            ]
+        }
+    ]
+}"#,
+                )
+                .unwrap();
+
+            let offer = API.peer_con_create_offer(peer_con_id, None).unwrap();
+            println!("RUST OFFER: {}", offer);
+
+            API.peer_con_set_local_desc(peer_con_id, &offer).unwrap();
+
+            std::thread::sleep(std::time::Duration::from_secs(2));
             API.peer_con_free(peer_con_id);
+            std::thread::sleep(std::time::Duration::from_secs(1));
         }
     }
 }

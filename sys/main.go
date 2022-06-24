@@ -39,6 +39,7 @@ import (
   "unsafe"
   "fmt"
   "sync"
+  "bytes"
 )
 
 type UintPtrT = C.uintptr_t;
@@ -54,6 +55,15 @@ func PtrToVoidStar(ptr UintPtrT) unsafe.Pointer {
 
 func PtrToCharStar(ptr UintPtrT) *byte {
   return (*byte)(C.ptr_to_void_star(ptr))
+}
+
+func LoadBytesSafe(ptr UintPtrT, length UintPtrT) *bytes.Buffer {
+  raw := unsafe.Slice(PtrToCharStar(ptr), length)
+
+  buf := new(bytes.Buffer)
+  buf.Grow(len(raw))
+  buf.Write(raw)
+  return buf
 }
 
 func MessageCbInvoke(
@@ -85,6 +95,10 @@ func EmitEvent(
 ) {
   globalEventReg.mu.Lock()
   defer globalEventReg.mu.Unlock()
+
+  if globalEventReg.event_cb == nil {
+    return
+  }
 
   C.MessageCbInvoke(
     globalEventReg.event_cb,
@@ -205,6 +219,10 @@ func callInner(
     CallBufferAccess(slot_a, response_cb, response_usr)
   case TyPeerConAlloc:
     CallPeerConAlloc(slot_a, slot_b, response_cb, response_usr)
+  case TyPeerConCreateOffer:
+    CallPeerConCreateOffer(slot_a, slot_b, slot_c, response_cb, response_usr)
+  case TyPeerConSetLocalDesc:
+    CallPeerConSetLocalDesc(slot_a, slot_b, slot_c, response_cb, response_usr)
   default:
     panic(fmt.Errorf("invalid call_type: %d", call_type))
   }

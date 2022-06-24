@@ -13,22 +13,23 @@ type PeerCon struct {
   mu sync.Mutex
   closed bool
   con *webrtc.PeerConnection
+  dataChan *webrtc.DataChannel
   handle UintPtrT
 }
 
-func (peer_con *PeerCon) Free() {
-  peer_con.mu.Lock()
-  defer peer_con.mu.Unlock()
+func (peerCon *PeerCon) Free() {
+  peerCon.mu.Lock()
+  defer peerCon.mu.Unlock()
 
-  if peer_con.closed {
+  if peerCon.closed {
     return
   }
 
-  peer_con.closed = true
-  (cgo.Handle)(peer_con.handle).Delete()
+  peerCon.closed = true
+  (cgo.Handle)(peerCon.handle).Delete()
 
-  peer_con.con.Close()
-  peer_con.con = nil
+  peerCon.con.Close()
+  peerCon.con = nil
 }
 
 func CallPeerConAlloc(
@@ -37,10 +38,10 @@ func CallPeerConAlloc(
   response_cb MessageCb,
   response_usr unsafe.Pointer,
 ) {
-  bytes := unsafe.Slice(PtrToCharStar(config_json), config_len)
+  buf := LoadBytesSafe(config_json, config_len)
 
   var config_parsed webrtc.Configuration
-  if err := json.Unmarshal(bytes, &config_parsed); err != nil {
+  if err := json.Unmarshal(buf.Bytes(), &config_parsed); err != nil {
     panic(err)
   }
 
@@ -49,22 +50,139 @@ func CallPeerConAlloc(
     panic(err)
   }
 
-  peer_con := new(PeerCon)
-  peer_con.con = con
-  peer_con.handle = UintPtrT(cgo.NewHandle(peer_con))
+  peerCon := new(PeerCon)
+  peerCon.con = con
+
+  handle := UintPtrT(cgo.NewHandle(peerCon))
+  peerCon.handle = handle
+
+  con.OnICECandidate(func(candidate *webrtc.ICECandidate) {
+    if candidate == nil {
+      return
+    }
+
+    bytes := []byte(candidate.ToJSON().Candidate)
+
+    EmitEvent(
+      TyPeerConICECandidate,
+      handle,
+      VoidStarToPtrT(unsafe.Pointer(&bytes[0])),
+      UintPtrT(len(bytes)),
+      0,
+    )
+  })
+
+  con.OnConnectionStateChange(func(state webrtc.PeerConnectionState) {
+    EmitEvent(
+      TyPeerConStateChange,
+      handle,
+      UintPtrT(state),
+      0,
+      0,
+    )
+  })
+
   MessageCbInvoke(
     response_cb,
     response_usr,
     TyPeerConAlloc,
-    peer_con.handle,
+    peerCon.handle,
     0,
     0,
     0,
   )
 }
 
-func CallPeerConFree(id UintPtrT) {
-  hnd := cgo.Handle(id)
-  peer_con := hnd.Value().(*PeerCon)
-  peer_con.Free()
+func CallPeerConFree(peer_con_id UintPtrT) {
+  hnd := cgo.Handle(peer_con_id)
+  peerCon := hnd.Value().(*PeerCon)
+  peerCon.Free()
+}
+
+func CallPeerConCreateOffer(
+  peer_con_id UintPtrT,
+  json_data UintPtrT,
+  json_len UintPtrT,
+  response_cb MessageCb,
+  response_usr unsafe.Pointer,
+) {
+  hnd := cgo.Handle(peer_con_id)
+  peerCon := hnd.Value().(*PeerCon)
+  peerCon.mu.Lock()
+  defer peerCon.mu.Unlock()
+
+  if peerCon.closed {
+    return
+  }
+
+  var opts *webrtc.OfferOptions
+
+  if json_data != 0 {
+    buf := LoadBytesSafe(json_data, json_len)
+
+    opts = new(webrtc.OfferOptions)
+    if err := json.Unmarshal(buf.Bytes(), opts); err != nil {
+      panic(err)
+    }
+  }
+
+  offer, err := peerCon.con.CreateOffer(opts)
+  if err != nil {
+    panic(err)
+  }
+
+  offerJson, err := json.Marshal(offer)
+  if err != nil {
+    panic(err)
+  }
+
+  offerBytes := []byte(offerJson)
+
+  MessageCbInvoke(
+    response_cb,
+    response_usr,
+    TyPeerConCreateOffer,
+    VoidStarToPtrT(unsafe.Pointer(&offerBytes[0])),
+    UintPtrT(len(offerBytes)),
+    0,
+    0,
+  )
+}
+
+func CallPeerConSetLocalDesc(
+  peer_con_id UintPtrT,
+  json_data UintPtrT,
+  json_len UintPtrT,
+  response_cb MessageCb,
+  response_usr unsafe.Pointer,
+) {
+  hnd := cgo.Handle(peer_con_id)
+  peerCon := hnd.Value().(*PeerCon)
+  peerCon.mu.Lock()
+  defer peerCon.mu.Unlock()
+
+  if peerCon.closed {
+    return
+  }
+
+  buf := LoadBytesSafe(json_data, json_len)
+
+  var desc webrtc.SessionDescription;
+  if err := json.Unmarshal(buf.Bytes(), &desc); err != nil {
+    panic(err)
+  }
+
+  if err := peerCon.con.SetLocalDescription(desc); err != nil {
+    panic(err)
+  }
+
+  MessageCbInvoke(
+    response_cb,
+    response_usr,
+    TyPeerConSetLocalDesc,
+    0,
+    0,
+    0,
+    0,
+  )
 }
