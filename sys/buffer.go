@@ -1,89 +1,97 @@
 package main
 
 import (
-  "runtime/cgo"
-  "unsafe"
-  "sync"
+  "bytes"
+	"runtime/cgo"
+	"sync"
+	"unsafe"
 )
 
 type Buffer struct {
-  mu sync.Mutex
-  closed bool
-  data *[]byte
-  handle UintPtrT
+	mu     sync.Mutex
+	closed bool
+  buf bytes.Buffer
+	handle UintPtrT
 }
 
 // If you invoke this function, you *must* call Free,
 // otherwise the buffer will be leaked.
-func NewBuffer(length UintPtrT) *Buffer {
-  buf := new(Buffer)
-  tmp := make([]byte, length)
-  buf.data = &tmp
-  buf.handle = UintPtrT(cgo.NewHandle(buf))
-  return buf
+func NewBuffer() *Buffer {
+	buf := new(Buffer)
+	buf.handle = UintPtrT(cgo.NewHandle(buf))
+	return buf
 }
 
-func (buf *Buffer) Free() *[]byte {
-  buf.mu.Lock()
-  defer buf.mu.Unlock()
+func (buf *Buffer) Free() {
+	buf.mu.Lock()
+	defer buf.mu.Unlock()
 
-  if buf.closed {
-    return nil
-  }
+	if buf.closed {
+		return
+	}
 
-  buf.closed = true
-  (cgo.Handle)(buf.handle).Delete()
-
-  out := buf.data
-  buf.data = nil
-
-  return out
+	buf.closed = true
+	(cgo.Handle)(buf.handle).Delete()
 }
 
 func CallBufferAlloc(
-  length UintPtrT,
-  response_cb MessageCb,
-  response_usr unsafe.Pointer,
+	response_cb MessageCb,
+	response_usr unsafe.Pointer,
 ) {
-  buf := NewBuffer(length)
-  MessageCbInvoke(
-    response_cb,
-    response_usr,
-    TyBufferAlloc,
-    buf.handle,
-    VoidStarToPtrT(unsafe.Pointer(&(*buf.data)[0])),
-    UintPtrT(len(*buf.data)),
-    0,
-  )
+	buf := NewBuffer()
+	MessageCbInvoke(
+		response_cb,
+		response_usr,
+		TyBufferAlloc,
+		buf.handle,
+		0,
+		0,
+		0,
+	)
 }
 
 func CallBufferFree(id UintPtrT) {
-  hnd := cgo.Handle(id)
-  buf := hnd.Value().(*Buffer)
-  buf.Free()
+	hnd := cgo.Handle(id)
+	buf := hnd.Value().(*Buffer)
+	buf.Free()
 }
 
 func CallBufferAccess(
-  id UintPtrT,
-  response_cb MessageCb,
-  response_usr unsafe.Pointer,
+	id UintPtrT,
+	response_cb MessageCb,
+	response_usr unsafe.Pointer,
 ) {
-  hnd := cgo.Handle(id)
-  buf := hnd.Value().(*Buffer)
-  buf.mu.Lock()
-  defer buf.mu.Unlock()
+	hnd := cgo.Handle(id)
+	buf := hnd.Value().(*Buffer)
+	buf.mu.Lock()
+	defer buf.mu.Unlock()
 
-  if buf.closed {
-    panic("BufferClosed")
+	if buf.closed {
+		panic("BufferClosed")
+	}
+
+  bytes := buf.buf.Bytes()
+
+  if bytes == nil {
+    MessageCbInvoke(
+      response_cb,
+      response_usr,
+      TyBufferAccess,
+      buf.handle,
+      0,
+      0,
+      0,
+    )
+    return
   }
 
-  MessageCbInvoke(
-    response_cb,
-    response_usr,
-    TyBufferAccess,
-    buf.handle,
-    VoidStarToPtrT(unsafe.Pointer(&(*buf.data)[0])),
-    UintPtrT(len(*buf.data)),
-    0,
-  )
+	MessageCbInvoke(
+		response_cb,
+		response_usr,
+		TyBufferAccess,
+		buf.handle,
+		VoidStarToPtrT(unsafe.Pointer(&(bytes)[0])),
+		UintPtrT(len(bytes)),
+		0,
+	)
 }

@@ -154,6 +154,7 @@ pub type SlotD = usize;
 pub type ErrorCode = usize;
 pub type BufferId = usize;
 pub type PeerConId = usize;
+pub type DataChanId = usize;
 pub type PeerConState = usize;
 
 #[derive(Debug)]
@@ -166,6 +167,10 @@ pub enum Event {
     PeerConStateChange {
         peer_con_id: PeerConId,
         peer_con_state: PeerConState,
+    },
+    PeerConDataChan {
+        peer_con_id: PeerConId,
+        data_chan_id: DataChanId,
     },
 }
 
@@ -216,9 +221,13 @@ impl Api {
                     peer_con_id: slot_a,
                     peer_con_state: slot_b,
                 },
+                TY_PEER_CON_ON_DATA_CHANNEL => Event::PeerConDataChan {
+                    peer_con_id: slot_a,
+                    data_chan_id: slot_b,
+                },
                 oth => Event::Error(Error {
                     code: 0,
-                    error: format!("invalide event_type: {}", oth),
+                    error: format!("invalid event_type: {}", oth),
                 }),
             };
 
@@ -329,16 +338,10 @@ impl Api {
     /// Create a new buffer in go memory with given length,
     /// access the buffer's memory in the callback.
     #[inline]
-    pub unsafe fn buffer_alloc<Cb, R>(&self, len: usize, cb: Cb) -> Result<R>
-    where
-        Cb: FnOnce(Result<(BufferId, &mut [u8])>) -> Result<R>,
-    {
-        self.call(TY_BUFFER_ALLOC, len, 0, 0, 0, move |r| match r {
-            Ok((_t, a, b, c, _d)) => {
-                let s = std::slice::from_raw_parts_mut(b as *mut _, c);
-                cb(Ok((a, s)))
-            }
-            Err(e) => cb(Err(e)),
+    pub unsafe fn buffer_alloc(&self) -> Result<BufferId> {
+        self.call(TY_BUFFER_ALLOC, 0, 0, 0, 0, |r| match r {
+            Ok((_t, a, _b, _c, _d)) => Ok(a),
+            Err(e) => Err(e),
         })
     }
 
@@ -362,8 +365,12 @@ impl Api {
     {
         self.call(TY_BUFFER_ACCESS, id, 0, 0, 0, move |r| match r {
             Ok((_t, a, b, c, _d)) => {
-                let s = std::slice::from_raw_parts_mut(b as *mut _, c);
-                cb(Ok((a, s)))
+                if c == 0 {
+                    cb(Ok((a, &mut [])))
+                } else {
+                    let s = std::slice::from_raw_parts_mut(b as *mut _, c);
+                    cb(Ok((a, s)))
+                }
             }
             Err(e) => cb(Err(e)),
         })
@@ -395,7 +402,7 @@ impl Api {
     #[inline]
     pub unsafe fn peer_con_create_offer(
         &self,
-        id: BufferId,
+        id: PeerConId,
         json: Option<&str>,
     ) -> Result<String> {
         let mut data = 0;
@@ -419,7 +426,7 @@ impl Api {
     #[inline]
     pub unsafe fn peer_con_create_answer(
         &self,
-        id: BufferId,
+        id: PeerConId,
         json: Option<&str>,
     ) -> Result<String> {
         let mut data = 0;
@@ -443,7 +450,7 @@ impl Api {
     #[inline]
     pub unsafe fn peer_con_set_local_desc(
         &self,
-        id: BufferId,
+        id: PeerConId,
         json: &str,
     ) -> Result<()> {
         let len = json.as_bytes().len();
@@ -458,7 +465,7 @@ impl Api {
     #[inline]
     pub unsafe fn peer_con_set_rem_desc(
         &self,
-        id: BufferId,
+        id: PeerConId,
         json: &str,
     ) -> Result<()> {
         let len = json.as_bytes().len();
@@ -473,7 +480,7 @@ impl Api {
     #[inline]
     pub unsafe fn peer_con_add_ice_candidate(
         &self,
-        id: BufferId,
+        id: PeerConId,
         json: &str,
     ) -> Result<()> {
         let len = json.as_bytes().len();
@@ -491,6 +498,41 @@ impl Api {
             },
         )
     }
+
+    #[inline]
+    pub unsafe fn peer_con_create_data_chan(
+        &self,
+        id: PeerConId,
+        json: &str,
+    ) -> Result<DataChanId> {
+        let len = json.as_bytes().len();
+        let data = json.as_bytes().as_ptr() as usize;
+
+        self.call(
+            TY_PEER_CON_CREATE_DATA_CHAN,
+            id,
+            data,
+            len,
+            0,
+            |r| match r {
+                Ok((_t, a, _b, _c, _d)) => Ok(a),
+                Err(e) => Err(e),
+            },
+        )
+    }
+
+    #[inline]
+    pub unsafe fn data_chan_free(&self, id: DataChanId) {
+        self.0.borrow_call()(
+            TY_DATA_CHAN_FREE,
+            id,
+            0,
+            0,
+            0,
+            None,
+            std::ptr::null_mut(),
+        );
+    }
 }
 
 /// The main entrypoint for working with this ffi binding crate.
@@ -503,15 +545,14 @@ mod test {
     #[test]
     fn buffer() {
         unsafe {
-            let buf_id = API
-                .buffer_alloc(8, |r| {
-                    let (id, buf) = r.unwrap();
-                    buf[1] = 1;
-                    buf[2] = 254;
-                    println!("GOT BUF: {:?}", buf);
-                    Ok(id)
-                })
-                .unwrap();
+            let buf_id = API.buffer_alloc().unwrap();
+            API.buffer_access(buf_id, |r| {
+                let (_, buf) = r.unwrap();
+                assert_eq!(0, buf.len());
+                <Result<()>>::Ok(())
+            })
+            .unwrap();
+            /*
             API.buffer_access(buf_id, |r| {
                 let (_, buf) = r.unwrap();
                 assert_eq!(buf[0], 0);
@@ -520,6 +561,7 @@ mod test {
                 <Result<()>>::Ok(())
             })
             .unwrap();
+            */
             API.buffer_free(buf_id);
         }
     }
@@ -539,6 +581,10 @@ mod test {
     ]
 }"#,
                 )
+                .unwrap();
+
+            let chan1 = API
+                .peer_con_create_data_chan(peer1, "{ \"label\": \"data\" }")
                 .unwrap();
 
             let peer2 = API
@@ -589,6 +635,13 @@ mod test {
                             peer_con_id, peer_con_state
                         );
                     }
+                    Event::PeerConDataChan {
+                        peer_con_id: _,
+                        data_chan_id,
+                    } => {
+                        println!("RUST DATA CHAN");
+                        API.data_chan_free(data_chan_id);
+                    }
                 });
             }
 
@@ -619,6 +672,7 @@ mod test {
             }
 
             std::thread::sleep(std::time::Duration::from_secs(5));
+            API.data_chan_free(chan1);
             API.peer_con_free(peer1);
             API.peer_con_free(peer2);
             std::thread::sleep(std::time::Duration::from_secs(1));

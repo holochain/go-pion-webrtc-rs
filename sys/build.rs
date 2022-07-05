@@ -7,6 +7,7 @@ fn main() {
     println!("cargo:rerun-if-changed=go.sum");
     println!("cargo:rerun-if-changed=buffer.go");
     println!("cargo:rerun-if-changed=const.go");
+    println!("cargo:rerun-if-changed=datachannel.go");
     println!("cargo:rerun-if-changed=peerconnection.go");
     println!("cargo:rerun-if-changed=main.go");
 
