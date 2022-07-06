@@ -3,8 +3,8 @@ package main
 import (
 	"fmt"
 	"runtime/cgo"
-  "unsafe"
 	"sync"
+	"unsafe"
 
 	"github.com/pion/webrtc/v3"
 )
@@ -64,10 +64,10 @@ func CallDataChanFree(data_chan_id UintPtrT) {
 }
 
 func CallDataChanSend(
-  data_chan_id UintPtrT,
-  buffer_id UintPtrT,
-  response_cb MessageCb,
-  response_usr unsafe.Pointer,
+	data_chan_id UintPtrT,
+	buffer_id UintPtrT,
+	response_cb MessageCb,
+	response_usr unsafe.Pointer,
 ) {
 	hnd := cgo.Handle(data_chan_id)
 	dataChan := hnd.Value().(*DataChan)
@@ -87,5 +87,5 @@ func CallDataChanSend(
 		panic("BufferClosed")
 	}
 
-  panic("TODO")
+	panic("TODO")
 }

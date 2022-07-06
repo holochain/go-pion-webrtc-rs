@@ -377,6 +377,56 @@ impl Api {
     }
 
     #[inline]
+    pub unsafe fn buffer_reserve(
+        &self,
+        id: BufferId,
+        add: usize,
+    ) -> Result<()> {
+        self.call(TY_BUFFER_RESERVE, id, add, 0, 0, |r| match r {
+            Ok((_t, _a, _b, _c, _d)) => Ok(()),
+            Err(e) => Err(e),
+        })
+    }
+
+    #[inline]
+    pub unsafe fn buffer_extend(&self, id: BufferId, add: &[u8]) -> Result<()> {
+        self.call(
+            TY_BUFFER_EXTEND,
+            id,
+            add.as_ptr() as usize,
+            add.len(),
+            0,
+            |r| match r {
+                Ok((_t, _a, _b, _c, _d)) => Ok(()),
+                Err(e) => Err(e),
+            },
+        )
+    }
+
+    #[inline]
+    pub unsafe fn buffer_read<Cb, R>(
+        &self,
+        id: BufferId,
+        len: usize,
+        cb: Cb,
+    ) -> Result<R>
+    where
+        Cb: FnOnce(Result<&mut [u8]>) -> Result<R>,
+    {
+        self.call(TY_BUFFER_READ, id, len, 0, 0, move |r| match r {
+            Ok((_t, a, b, _c, _d)) => {
+                if b == 0 {
+                    cb(Ok(&mut []))
+                } else {
+                    let s = std::slice::from_raw_parts_mut(a as *mut _, b);
+                    cb(Ok(s))
+                }
+            }
+            Err(e) => cb(Err(e)),
+        })
+    }
+
+    #[inline]
     pub unsafe fn peer_con_alloc(&self, json: &str) -> Result<PeerConId> {
         let len = json.as_bytes().len();
         let data = json.as_bytes().as_ptr() as usize;
@@ -552,16 +602,25 @@ mod test {
                 <Result<()>>::Ok(())
             })
             .unwrap();
-            /*
+            API.buffer_reserve(buf_id, 5).unwrap();
+            API.buffer_extend(buf_id, b"hello").unwrap();
             API.buffer_access(buf_id, |r| {
                 let (_, buf) = r.unwrap();
-                assert_eq!(buf[0], 0);
-                assert_eq!(buf[1], 1);
-                assert_eq!(buf[2], 254);
+                assert_eq!(b"hello", buf);
                 <Result<()>>::Ok(())
             })
             .unwrap();
-            */
+            API.buffer_read(buf_id, 5, |r| {
+                assert_eq!(b"hello", r.unwrap());
+                <Result<()>>::Ok(())
+            })
+            .unwrap();
+            API.buffer_access(buf_id, |r| {
+                let (_, buf) = r.unwrap();
+                assert_eq!(0, buf.len());
+                <Result<()>>::Ok(())
+            })
+            .unwrap();
             API.buffer_free(buf_id);
         }
     }

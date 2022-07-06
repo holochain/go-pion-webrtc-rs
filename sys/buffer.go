@@ -1,7 +1,7 @@
 package main
 
 import (
-  "bytes"
+	"bytes"
 	"runtime/cgo"
 	"sync"
 	"unsafe"
@@ -10,7 +10,7 @@ import (
 type Buffer struct {
 	mu     sync.Mutex
 	closed bool
-  buf bytes.Buffer
+	buf    bytes.Buffer
 	handle UintPtrT
 }
 
@@ -70,20 +70,20 @@ func CallBufferAccess(
 		panic("BufferClosed")
 	}
 
-  bytes := buf.buf.Bytes()
+	bytes := buf.buf.Bytes()
 
-  if bytes == nil {
-    MessageCbInvoke(
-      response_cb,
-      response_usr,
-      TyBufferAccess,
-      buf.handle,
-      0,
-      0,
-      0,
-    )
-    return
-  }
+	if bytes == nil || len(bytes) == 0 {
+		MessageCbInvoke(
+			response_cb,
+			response_usr,
+			TyBufferAccess,
+			buf.handle,
+			0,
+			0,
+			0,
+		)
+		return
+	}
 
 	MessageCbInvoke(
 		response_cb,
@@ -92,6 +92,107 @@ func CallBufferAccess(
 		buf.handle,
 		VoidStarToPtrT(unsafe.Pointer(&(bytes)[0])),
 		UintPtrT(len(bytes)),
+		0,
+	)
+}
+
+func CallBufferReserve(
+	id UintPtrT,
+	add UintPtrT,
+	response_cb MessageCb,
+	response_usr unsafe.Pointer,
+) {
+	hnd := cgo.Handle(id)
+	buf := hnd.Value().(*Buffer)
+	buf.mu.Lock()
+	defer buf.mu.Unlock()
+
+	if buf.closed {
+		panic("BufferClosed")
+	}
+
+	buf.buf.Grow(int(add))
+
+	MessageCbInvoke(
+		response_cb,
+		response_usr,
+		TyBufferReserve,
+		0,
+		0,
+		0,
+		0,
+	)
+}
+
+func CallBufferExtend(
+	id UintPtrT,
+	data UintPtrT,
+	data_len UintPtrT,
+	response_cb MessageCb,
+	response_usr unsafe.Pointer,
+) {
+	hnd := cgo.Handle(id)
+	buf := hnd.Value().(*Buffer)
+	buf.mu.Lock()
+	defer buf.mu.Unlock()
+
+	if buf.closed {
+		panic("BufferClosed")
+	}
+
+	raw := unsafe.Slice(PtrToCharStar(data), data_len)
+
+	// docs say err is always nil, so no point in checking it
+	buf.buf.Write(raw)
+
+	MessageCbInvoke(
+		response_cb,
+		response_usr,
+		TyBufferExtend,
+		0,
+		0,
+		0,
+		0,
+	)
+}
+
+func CallBufferRead(
+	id UintPtrT,
+	cnt UintPtrT,
+	response_cb MessageCb,
+	response_usr unsafe.Pointer,
+) {
+	hnd := cgo.Handle(id)
+	buf := hnd.Value().(*Buffer)
+	buf.mu.Lock()
+	defer buf.mu.Unlock()
+
+	if buf.closed {
+		panic("BufferClosed")
+	}
+
+	bytes := buf.buf.Next(int(cnt))
+
+	if bytes == nil || len(bytes) == 0 {
+		MessageCbInvoke(
+			response_cb,
+			response_usr,
+			TyBufferRead,
+			0,
+			0,
+			0,
+			0,
+		)
+		return
+	}
+
+	MessageCbInvoke(
+		response_cb,
+		response_usr,
+		TyBufferRead,
+		VoidStarToPtrT(unsafe.Pointer(&(bytes)[0])),
+		UintPtrT(len(bytes)),
+		0,
 		0,
 	)
 }

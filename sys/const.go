@@ -26,6 +26,28 @@ const (
 	// - msg slot_c: buffer len
 	TyBufferAccess UintPtrT = 0x8003
 
+	// Request additional space be reserved for appending to buffer.
+	// - allowed contexts: Call, Response
+	// - call slot_a: buffer id
+	// - call slot_b: additional length
+	TyBufferReserve UintPtrT = 0x8004
+
+	// Request existing buffer be extended with provided additional bytes.
+	// - allowed contexts: Call, Response
+	// - call slot_a: buffer id
+	// - call slot_b: additional bytes ptr
+	// - call slot_c: additional bytes len
+	TyBufferExtend UintPtrT = 0x8005
+
+	// Request access to bytes at beginning of existing buffer, advancing the
+	// read cursor.
+	// - allowed contexts: Call, Response
+	// - call slot_a: buffer id
+	// - call slot_b: max read length
+	// - msg slot_a: buffer ptr
+	// - msg slot_b: buffer len
+	TyBufferRead UintPtrT = 0x8006
+
 	// Request a new peer connection be opened.
 	// - allowed contexts: Call, Response
 	// - call slot_a: utf8 json config ptr

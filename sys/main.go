@@ -220,6 +220,12 @@ func callInner(
 		CallBufferAlloc(response_cb, response_usr)
 	case TyBufferAccess:
 		CallBufferAccess(slot_a, response_cb, response_usr)
+	case TyBufferReserve:
+		CallBufferReserve(slot_a, slot_b, response_cb, response_usr)
+	case TyBufferExtend:
+		CallBufferExtend(slot_a, slot_b, slot_c, response_cb, response_usr)
+	case TyBufferRead:
+		CallBufferRead(slot_a, slot_b, response_cb, response_usr)
 	case TyPeerConAlloc:
 		CallPeerConAlloc(slot_a, slot_b, response_cb, response_usr)
 	case TyPeerConCreateOffer:
