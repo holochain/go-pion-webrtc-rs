@@ -2,6 +2,10 @@ package main
 
 import (
 	"encoding/json"
+	//"crypto/ecdsa"
+	//"crypto/elliptic"
+	//"crypto/rand"
+	//"fmt"
 	"runtime/cgo"
 	"sync"
 	"unsafe"
@@ -31,17 +35,49 @@ func (peerCon *PeerCon) Free() {
 	peerCon.con = nil
 }
 
+type PeerConConfig struct {
+	ICEServers   []webrtc.ICEServer `json:"iceServers,omitempty"`
+	Certificates []string           `json:"certificates,omitempty"`
+}
+
 func CallPeerConAlloc(
 	config_json UintPtrT,
 	config_len UintPtrT,
 	response_cb MessageCb,
 	response_usr unsafe.Pointer,
 ) {
+	/*
+	  sk, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	  if err != nil {
+	    panic(err)
+	  }
+	  certificate, err := webrtc.GenerateCertificate(sk)
+	  if err != nil {
+	    panic(err)
+	  }
+	  certPem, err := certificate.PEM()
+	  if err != nil {
+	    panic(err)
+	  }
+	  fmt.Printf("cert:\n%s\n", certPem)
+	*/
+
 	buf := LoadBytesSafe(config_json, config_len)
 
-	var config_parsed webrtc.Configuration
-	if err := json.Unmarshal(buf.Bytes(), &config_parsed); err != nil {
+	var tmpConfig PeerConConfig
+	if err := json.Unmarshal(buf.Bytes(), &tmpConfig); err != nil {
 		panic(err)
+	}
+
+	var config_parsed webrtc.Configuration
+	config_parsed.ICEServers = tmpConfig.ICEServers
+
+	for _, certPem := range tmpConfig.Certificates {
+		cert, err := webrtc.CertificateFromPEM(certPem)
+		if err != nil {
+			panic(err)
+		}
+		config_parsed.Certificates = append(config_parsed.Certificates, *cert)
 	}
 
 	con, err := webrtc.NewPeerConnection(config_parsed)
@@ -383,6 +419,44 @@ func CallPeerConCreateDataChan(
 		TyPeerConCreateDataChan,
 		dataChan.handle,
 		0,
+		0,
+		0,
+	)
+}
+
+func CallPeerConRemCert(
+	peer_con_id UintPtrT,
+	response_cb MessageCb,
+	response_usr unsafe.Pointer,
+) {
+	hnd := cgo.Handle(peer_con_id)
+	peerCon := hnd.Value().(*PeerCon)
+	peerCon.mu.Lock()
+	defer peerCon.mu.Unlock()
+
+	if peerCon.closed {
+		panic("PeerConClosed")
+	}
+
+	sctp := peerCon.con.SCTP()
+	if sctp == nil {
+		panic("NoSCTP")
+	}
+	tx := sctp.Transport()
+	if tx == nil {
+		panic("NoDTLS")
+	}
+	cert := tx.GetRemoteCertificate()
+	if cert == nil || len(cert) < 1 {
+		panic("NoRemCert")
+	}
+
+	MessageCbInvoke(
+		response_cb,
+		response_usr,
+		TyPeerConRemCert,
+		VoidStarToPtrT(unsafe.Pointer(&cert[0])),
+		UintPtrT(len(cert)),
 		0,
 		0,
 	)

@@ -13,6 +13,7 @@ pub const TY_PEER_CON_SET_LOCAL_DESC: usize = 0x9005;
 pub const TY_PEER_CON_SET_REM_DESC: usize = 0x9006;
 pub const TY_PEER_CON_ADD_ICE_CANDIDATE: usize = 0x9007;
 pub const TY_PEER_CON_CREATE_DATA_CHAN: usize = 0x9008;
+pub const TY_PEER_CON_REM_CERT: usize = 0x9009;
 pub const TY_PEER_CON_ON_ICE_CANDIDATE: usize = 0x9801;
 pub const TY_PEER_CON_ON_STATE_CHANGE: usize = 0x9802;
 pub const TY_PEER_CON_ON_DATA_CHANNEL: usize = 0x9803;
