@@ -129,4 +129,40 @@ const (
 	// - allowed contexts: Call, Response
 	// - call slot_a: data_chan id
 	TyDataChanFree UintPtrT = 0xa002
+
+	// Request the ready state of an existing data channel..
+	// - allowed contexts: Call, Response
+	// - call slot_a: data_chan id
+	// - msg slot_a: ready state
+	TyDataChanReadyState UintPtrT = 0xa003
+
+	// Request an existing data chan send data to the remote end.
+	// - allowed contexts: Call, Response
+	// - call slot_a: data_chan id
+	// - call slot_b: buffer id
+	TyDataChanSend UintPtrT = 0xa004
+
+	// OnClose event on an existing data chan.
+	// - allowed contexts: Event
+	// - msg slot_a: data_chan id
+	TyDataChanOnClose UintPtrT = 0xa801
+
+	// OnOpen event on an existing data chan.
+	// - allowed contexts: Event
+	// - msg slot_a: data_chan id
+	TyDataChanOnOpen UintPtrT = 0xa802
+
+	// OnError event on an existing data chan.
+	// - allowed contexts: Event
+	// - msg slot_a: data_chan id
+	// - msg slot_b: data ptr
+	// - msg slot_c: data len
+	TyDataChanOnError UintPtrT = 0xa803
+
+	// OnMessage event on an existing data chan.
+	// - allowed contexts: Event
+	// - msg slot_a: data_chan id
+	// - msg slot_b: data ptr
+	// - msg slot_c: data len
+	TyDataChanOnMessage UintPtrT = 0xa804
 )

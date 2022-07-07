@@ -10,14 +10,19 @@ import (
 type Buffer struct {
 	mu     sync.Mutex
 	closed bool
-	buf    bytes.Buffer
+	buf    *bytes.Buffer
 	handle UintPtrT
 }
 
 // If you invoke this function, you *must* call Free,
 // otherwise the buffer will be leaked.
-func NewBuffer() *Buffer {
+func NewBuffer(initBuf []byte) *Buffer {
 	buf := new(Buffer)
+	if initBuf != nil {
+		buf.buf = bytes.NewBuffer(initBuf)
+	} else {
+		buf.buf = new(bytes.Buffer)
+	}
 	buf.handle = UintPtrT(cgo.NewHandle(buf))
 	return buf
 }
@@ -38,7 +43,7 @@ func CallBufferAlloc(
 	response_cb MessageCb,
 	response_usr unsafe.Pointer,
 ) {
-	buf := NewBuffer()
+	buf := NewBuffer(nil)
 	MessageCbInvoke(
 		response_cb,
 		response_usr,

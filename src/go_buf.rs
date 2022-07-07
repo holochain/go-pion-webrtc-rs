@@ -3,7 +3,8 @@ use go_pion_webrtc_sys::API;
 
 /// A bytes.Buffer managed in go memory.
 /// Rust can only access go memory safely during a callback.
-pub struct GoBuf(usize);
+#[derive(Debug)]
+pub struct GoBuf(pub(crate) usize);
 
 impl Drop for GoBuf {
     fn drop(&mut self) {

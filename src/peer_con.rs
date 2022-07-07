@@ -55,10 +55,13 @@ impl PeerConnection {
     }
 
     /// Create data channel.
-    pub fn create_data_channel(&mut self, json: &str) -> Result<DataChannel> {
+    pub fn create_data_channel(
+        &mut self,
+        json: &str,
+    ) -> Result<DataChannelSeed> {
         unsafe {
             let data_chan_id = API.peer_con_create_data_chan(self.0, json)?;
-            Ok(DataChannel(data_chan_id))
+            Ok(DataChannelSeed(data_chan_id))
         }
     }
 }

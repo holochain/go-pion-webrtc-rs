@@ -172,6 +172,12 @@ pub enum Event {
         peer_con_id: PeerConId,
         data_chan_id: DataChanId,
     },
+    DataChanClose(DataChanId),
+    DataChanOpen(DataChanId),
+    DataChanMessage {
+        data_chan_id: DataChanId,
+        buffer_id: BufferId,
+    },
 }
 
 pub struct Api(LibInner);
@@ -224,6 +230,12 @@ impl Api {
                 TY_PEER_CON_ON_DATA_CHANNEL => Event::PeerConDataChan {
                     peer_con_id: slot_a,
                     data_chan_id: slot_b,
+                },
+                TY_DATA_CHAN_ON_CLOSE => Event::DataChanClose(slot_a),
+                TY_DATA_CHAN_ON_OPEN => Event::DataChanOpen(slot_a),
+                TY_DATA_CHAN_ON_MESSAGE => Event::DataChanMessage {
+                    data_chan_id: slot_a,
+                    buffer_id: slot_b,
                 },
                 oth => Event::Error(Error {
                     code: 0,
@@ -583,158 +595,30 @@ impl Api {
             std::ptr::null_mut(),
         );
     }
+
+    #[inline]
+    pub unsafe fn data_chan_ready_state(
+        &self,
+        id: DataChanId,
+    ) -> Result<usize> {
+        self.call(TY_DATA_CHAN_READY_STATE, id, 0, 0, 0, |r| match r {
+            Ok((_t, a, _b, _c, _d)) => Ok(a),
+            Err(e) => Err(e),
+        })
+    }
+
+    #[inline]
+    pub unsafe fn data_chan_send(
+        &self,
+        id: DataChanId,
+        buffer_id: BufferId,
+    ) -> Result<()> {
+        self.call(TY_DATA_CHAN_SEND, id, buffer_id, 0, 0, |r| match r {
+            Ok((_t, _a, _b, _c, _d)) => Ok(()),
+            Err(e) => Err(e),
+        })
+    }
 }
 
 /// The main entrypoint for working with this ffi binding crate.
 pub static API: Lazy<Api> = Lazy::new(Api::priv_new);
-
-#[cfg(test)]
-mod test {
-    use super::*;
-
-    #[test]
-    fn buffer() {
-        unsafe {
-            let buf_id = API.buffer_alloc().unwrap();
-            API.buffer_access(buf_id, |r| {
-                let (_, buf) = r.unwrap();
-                assert_eq!(0, buf.len());
-                <Result<()>>::Ok(())
-            })
-            .unwrap();
-            API.buffer_reserve(buf_id, 5).unwrap();
-            API.buffer_extend(buf_id, b"hello").unwrap();
-            API.buffer_access(buf_id, |r| {
-                let (_, buf) = r.unwrap();
-                assert_eq!(b"hello", buf);
-                <Result<()>>::Ok(())
-            })
-            .unwrap();
-            API.buffer_read(buf_id, 5, |r| {
-                assert_eq!(b"hello", r.unwrap());
-                <Result<()>>::Ok(())
-            })
-            .unwrap();
-            API.buffer_access(buf_id, |r| {
-                let (_, buf) = r.unwrap();
-                assert_eq!(0, buf.len());
-                <Result<()>>::Ok(())
-            })
-            .unwrap();
-            API.buffer_free(buf_id);
-        }
-    }
-
-    #[test]
-    fn peer_con() {
-        unsafe {
-            let peer1 = API
-                .peer_con_alloc(
-                    r#"{
-    "iceServers": [
-        {
-            "urls": [
-                "stun:stun.l.google.com:19302"
-            ]
-        }
-    ]
-}"#,
-                )
-                .unwrap();
-
-            let chan1 = API
-                .peer_con_create_data_chan(peer1, "{ \"label\": \"data\" }")
-                .unwrap();
-
-            let peer2 = API
-                .peer_con_alloc(
-                    r#"{
-    "iceServers": [
-        {
-            "urls": [
-                "stun:stun.l.google.com:19302"
-            ]
-        }
-    ]
-}"#,
-                )
-                .unwrap();
-
-            let ice1 = Arc::new(parking_lot::Mutex::new(Vec::new()));
-            let ice2 = Arc::new(parking_lot::Mutex::new(Vec::new()));
-
-            {
-                let ice1 = ice1.clone();
-                let ice2 = ice2.clone();
-                API.on_event(move |evt| match evt {
-                    Event::Error(err) => panic!("{}", err),
-                    Event::PeerConICECandidate {
-                        peer_con_id,
-                        candidate,
-                    } => {
-                        println!("RUST ICE: {} {}", peer_con_id, candidate);
-                        if peer_con_id == peer1 {
-                            println!("peer2 add candidate {}", candidate);
-                            API.peer_con_add_ice_candidate(peer2, &candidate)
-                                .unwrap();
-                            ice1.lock().push(candidate);
-                        } else if peer_con_id == peer2 {
-                            println!("peer1 add candidate {}", candidate);
-                            API.peer_con_add_ice_candidate(peer1, &candidate)
-                                .unwrap();
-                            ice2.lock().push(candidate);
-                        }
-                    }
-                    Event::PeerConStateChange {
-                        peer_con_id,
-                        peer_con_state,
-                    } => {
-                        println!(
-                            "RUST STATE EVT: {} {}",
-                            peer_con_id, peer_con_state
-                        );
-                    }
-                    Event::PeerConDataChan {
-                        peer_con_id: _,
-                        data_chan_id,
-                    } => {
-                        println!("RUST DATA CHAN");
-                        API.data_chan_free(data_chan_id);
-                    }
-                });
-            }
-
-            let offer = API.peer_con_create_offer(peer1, None).unwrap();
-            println!("RUST OFFER: {}", offer);
-
-            API.peer_con_set_local_desc(peer1, &offer).unwrap();
-
-            API.peer_con_set_rem_desc(peer2, &offer).unwrap();
-
-            let answer = API.peer_con_create_answer(peer2, None).unwrap();
-            println!("RUST ANSWER: {}", answer);
-
-            API.peer_con_set_local_desc(peer2, &answer).unwrap();
-
-            API.peer_con_set_rem_desc(peer1, &answer).unwrap();
-
-            let clist1 = ice1.lock().clone();
-            for c in clist1 {
-                println!("peer2 add candidate {}", c);
-                API.peer_con_add_ice_candidate(peer2, &c).unwrap();
-            }
-
-            let clist2 = ice2.lock().clone();
-            for c in clist2 {
-                println!("peer1 add candidate {}", c);
-                API.peer_con_add_ice_candidate(peer1, &c).unwrap();
-            }
-
-            std::thread::sleep(std::time::Duration::from_secs(5));
-            API.data_chan_free(chan1);
-            API.peer_con_free(peer1);
-            API.peer_con_free(peer2);
-            std::thread::sleep(std::time::Duration::from_secs(1));
-        }
-    }
-}

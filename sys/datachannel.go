@@ -21,14 +21,28 @@ type DataChan struct {
 func NewDataChan(ch *webrtc.DataChannel) *DataChan {
 	dataChan := new(DataChan)
 	dataChan.ch = ch
-	dataChan.handle = UintPtrT(cgo.NewHandle(dataChan))
+
+	handle := UintPtrT(cgo.NewHandle(dataChan))
+	dataChan.handle = handle
 
 	ch.OnClose(func() {
-		fmt.Printf("go DATA CHAN CLOSE\n")
+		EmitEvent(
+			TyDataChanOnClose,
+			handle,
+			0,
+			0,
+			0,
+		)
 	})
 
 	ch.OnOpen(func() {
-		fmt.Printf("go DATA CHAN OPEN\n")
+		EmitEvent(
+			TyDataChanOnOpen,
+			handle,
+			0,
+			0,
+			0,
+		)
 	})
 
 	ch.OnError(func(err error) {
@@ -36,7 +50,14 @@ func NewDataChan(ch *webrtc.DataChannel) *DataChan {
 	})
 
 	ch.OnMessage(func(msg webrtc.DataChannelMessage) {
-		fmt.Printf("go DATA CHAN MSG %v\n", msg)
+		buf := NewBuffer(msg.Data)
+		EmitEvent(
+			TyDataChanOnMessage,
+			handle,
+			buf.handle,
+			0,
+			0,
+		)
 	})
 
 	return dataChan
@@ -63,6 +84,33 @@ func CallDataChanFree(data_chan_id UintPtrT) {
 	dataChan.Free()
 }
 
+func CallDataChanReadyState(
+	data_chan_id UintPtrT,
+	response_cb MessageCb,
+	response_usr unsafe.Pointer,
+) {
+	hnd := cgo.Handle(data_chan_id)
+	dataChan := hnd.Value().(*DataChan)
+	dataChan.mu.Lock()
+	defer dataChan.mu.Unlock()
+
+	if dataChan.closed {
+		panic("DataChanClosed")
+	}
+
+	state := UintPtrT(dataChan.ch.ReadyState())
+
+	MessageCbInvoke(
+		response_cb,
+		response_usr,
+		TyDataChanReadyState,
+		state,
+		0,
+		0,
+		0,
+	)
+}
+
 func CallDataChanSend(
 	data_chan_id UintPtrT,
 	buffer_id UintPtrT,
@@ -81,11 +129,32 @@ func CallDataChanSend(
 	buf_hnd := cgo.Handle(buffer_id)
 	buf := buf_hnd.Value().(*Buffer)
 	buf.mu.Lock()
-	defer buf.mu.Unlock()
+	// defer buf.mu.Unlock()
+	// don't defer Unlock, we need to be able to unlock it manually
+	// so that we can free the passed in buffer... *BUT* that
+	// means we have to manually unlock it before all exits
 
 	if buf.closed {
+		buf.mu.Unlock()
 		panic("BufferClosed")
 	}
 
-	panic("TODO")
+	err := dataChan.ch.Send(buf.buf.Bytes())
+
+	buf.mu.Unlock()
+	buf.Free()
+
+	if err != nil {
+		panic(err)
+	}
+
+	MessageCbInvoke(
+		response_cb,
+		response_usr,
+		TyDataChanSend,
+		0,
+		0,
+		0,
+		0,
+	)
 }
