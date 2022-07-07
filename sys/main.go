@@ -97,6 +97,10 @@ func EmitEvent(
 	defer globalEventReg.mu.Unlock()
 
 	if globalEventReg.event_cb == nil {
+		// TODO!!! MEMORY LEAK
+		// if there is not an event handler
+		// we need to clean up (Free) any types in this event
+		// that have handles, such as DataChannels and Buffers
 		return
 	}
 

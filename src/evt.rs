@@ -53,6 +53,10 @@ pub(crate) type DataChanEvtCb =
 
 static MANAGER: Lazy<Mutex<Manager>> = Lazy::new(|| {
     unsafe {
+        // TODO!!! MEORY LEAK
+        // we need else cases througout here, if there isn't a
+        // registered callback, we need to call _free functions
+        // on incoming events like DataChannel and OnMessage buffers.
         API.on_event(|sys_evt| match sys_evt {
             SysEvent::Error(_error) => (),
             SysEvent::PeerConICECandidate {
